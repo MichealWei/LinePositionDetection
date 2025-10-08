@@ -82,10 +82,10 @@ class Program
     {
         //string path = "C:\\ImageAlgorithm\\Images\\tilted.png"; // use your path
         string currentDirectory = Environment.CurrentDirectory;
-        string path = Path.Combine(currentDirectory, "Images", "Lshape.png");  // change image name here: "tilted.png", "wafer.png", "Lshape.png", "horizontal.png"
+        string path = Path.Combine(currentDirectory, "Images", "tilted.png");  // change image name here: "tilted.png", "wafer.png", "Lshape.png", "horizontal.png"
         //string path = Path.Combine("Images", "tilted.png");
-        var img = Cv2.ImRead(path, ImreadModes.Grayscale);
-        if (img.Empty())
+        var srcImage = Cv2.ImRead(path, ImreadModes.Grayscale);
+        if (srcImage.Empty())
         {
             Console.WriteLine("Cannot read image at " + path);
             return;
@@ -93,42 +93,42 @@ class Program
 
 
         // Preprocess: blur, threshold, close small gaps
-        Mat blur = new Mat();
-        Cv2.GaussianBlur(img, blur, new Size(5, 5), 0);
-        Mat bin = new Mat();
-        Cv2.Threshold(blur, bin, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
+        Mat blurredImage = new Mat();
+        Cv2.GaussianBlur(srcImage, blurredImage, new Size(5, 5), 0);
+        Mat binaryImage = new Mat();
+        Cv2.Threshold(blurredImage, binaryImage, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
         Mat kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new Size(5, 5));
-        Cv2.MorphologyEx(bin, bin, MorphTypes.Close, kernel);
+        Cv2.MorphologyEx(binaryImage, binaryImage, MorphTypes.Close, kernel);
 
         // Edge detect
-        Mat edges = new Mat();
-        Cv2.Canny(bin, edges, 50, 150);
+        Mat edgeImage = new Mat();
+        Cv2.Canny(binaryImage, edgeImage, 50, 150);
         //Cv2.Canny(bin, edges, 50, 150, 3, false);
-        saveResultImage(edges, path);
+        saveResultImage(edgeImage, path);
 
-        // Optional: find contours, use contours points for FitLine instead of all edge points
-        Cv2.FindContours(edges, out var contours,
+        // Find contours, use contours points for FitLine instead of all edge points
+        Cv2.FindContours(edgeImage, out var contours,
                         out _, RetrievalModes.External,
                         ContourApproximationModes.ApproxNone);
 
         
-        int wd = img.Cols;
-        int hg = img.Rows;
+        int imageWidth = srcImage.Cols;
+        int imageHeight = srcImage.Rows;
 
-        var drawn = new Mat();
-        Cv2.CvtColor(img, drawn, ColorConversionCodes.GRAY2BGR);
+        var resultImage = new Mat();
+        Cv2.CvtColor(srcImage, resultImage, ColorConversionCodes.GRAY2BGR);
 
         for (int i = 0; i < contours.Length; i++)   // Draw contours in blue to check it
         {
-            Cv2.DrawContours(drawn, contours, i, Scalar.Blue, 1, LineTypes.AntiAlias);
+            Cv2.DrawContours(resultImage, contours, i, Scalar.Blue, 1, LineTypes.AntiAlias);
         }
-        saveResultImage(drawn, path);
-        Cv2.ImShow("contours", drawn);
+        saveResultImage(resultImage, path);
+        Cv2.ImShow("contours", resultImage);
 
 
         // Tunable parameters (adapt by image size if needed)
-        double minSegLen = Math.Max(8.0, Math.Min(wd, hg) * 0.02);   // ignore polygon edges shorter than this
-        int minPtsForFit = Math.Max(30, (int)(Math.Min(wd, hg) * 0.03)); // require this many unique points to fit
+        double minSegLen = Math.Max(8.0, Math.Min(imageWidth, imageHeight) * 0.02);   // ignore polygon edges shorter than this
+        int minPtsForFit = Math.Max(30, (int)(Math.Min(imageWidth, imageHeight) * 0.03)); // require this many unique points to fit
         double horizDegThresh = 30.0;  // <=30° considered horizontal after mapping
         double vertDegThresh = 30.0;   // <=30° from vertical => mapped angle >= (90-30)=60 ; we use mapped angle > (90-vertThresh)
         double horizRadThresh = horizDegThresh * Math.PI / 180.0;
@@ -136,15 +136,15 @@ class Program
 
         // We'll collect fitted lines (vx, vy, x0, y0, count) to draw later
         var fittedLines = new List<(double vx, double vy, double x0, double y0, string type, int ptsCount)>();
-
-        foreach (var cnt in contours)
+        var colorsList = new List<Scalar> { Scalar.Yellow, Scalar.Aqua, Scalar.Red, Scalar.Blue };
+        foreach (var contour in contours)
         {
-            if (cnt.Length < 30)      // skip tiny noise
+            if (contour.Length < 30)      // skip tiny noise
                 continue;
 
 
             // Approximate to reduce number of points
-            var approx = Cv2.ApproxPolyDP(cnt, 2, true);
+            var approx = Cv2.ApproxPolyDP(contour, 2, true);
 
             var horizontalPts = new List<Point>();
             var verticalPts = new List<Point>();
@@ -170,16 +170,16 @@ class Program
                 bool isVertical = angMapped >= (Math.PI / 2.0 - vertRadThresh);
 
                 // find indices of p1 and p2 in original contour (should exist)
-                int idx1 = Array.FindIndex(cnt, pt => pt.X == pt1.X && pt.Y == pt1.Y);
-                int idx2 = Array.FindIndex(cnt, pt => pt.X == pt2.X && pt.Y == pt2.Y);
+                int pt1Index = Array.FindIndex(contour, pt => pt.X == pt1.X && pt.Y == pt1.Y);
+                int pt2Index = Array.FindIndex(contour, pt => pt.X == pt2.X && pt.Y == pt2.Y);
 
                 // collect contour points along the segment between idx1 and idx2 (wrap if needed)
                 List<Point> segPoints = new List<Point>();
-                if (idx1 >= 0 && idx2 >= 0)
+                if (pt1Index >= 0 && pt2Index >= 0)
                 {
-                    if (idx2 >= idx1)
+                    if (pt2Index >= pt1Index)
                     {
-                        for (int k = idx1; k <= idx2; k++) segPoints.Add(cnt[k]);
+                        for (int k = pt1Index; k <= pt2Index; k++) segPoints.Add(contour[k]);
                     }
                 }
                 else
@@ -200,15 +200,14 @@ class Program
                 }
 
                 // draw the approx segment (for debugging) - thin cyan
-                Cv2.Line(drawn, pt1, pt2, new Scalar(200, 200, 0), 1);
-                
+                Cv2.Line(resultImage, pt1, pt2, new Scalar(200, 200, 0), 1);
             }
 
-            // Deduplicate points
+            // Remove deduplicate points
             var horizUnique = horizontalPts.Distinct().ToArray();
             var vertUnique = verticalPts.Distinct().ToArray();
 
-            Console.WriteLine($"Contour pts: {cnt.Length}, approx edges: {approx.Length}, horizPts={horizUnique.Length}, vertPts={vertUnique.Length}");
+            Console.WriteLine($"Contour pts: {contour.Length}, approx edges: {approx.Length}, horizPts={horizUnique.Length}, vertPts={vertUnique.Length}");
 
             // Fit a line to horizontal points if enough points
             if (horizUnique.Length >= minPtsForFit)
@@ -223,13 +222,13 @@ class Program
                 var fit = Cv2.FitLine(vertUnique, DistanceTypes.L2, 0, 0.01, 0.01);
                 fittedLines.Add((fit.Vx, fit.Vy, fit.X1, fit.Y1, "V", horizUnique.Length));
             }
-
         }
 
         // Draw fitted lines across image and print equations
         int idxLine = 1;
-        var drawn3 = new Mat();
-        Cv2.CvtColor(img, drawn3, ColorConversionCodes.GRAY2BGR);
+        var resultImage2 = new Mat();
+        Cv2.CvtColor(srcImage, resultImage2, ColorConversionCodes.GRAY2BGR);
+        int colorInd = 0;
         foreach (var L in fittedLines)
         {
             double vx = L.vx, vy = L.vy, x0 = L.x0, y0 = L.y0;
@@ -239,18 +238,19 @@ class Program
             if (Math.Abs(vx) < 1e-8)
             {
                 int x = (int)Math.Round(x0);
-                p1 = new Point(x, 0); p2 = new Point(x, hg - 1);
+                p1 = new Point(x, 0); p2 = new Point(x, imageHeight - 1);
             }
             else
             {
                 double leftY = y0 + (0 - x0) * (vy / vx);
-                double rightY = y0 + ((wd - 1 - x0) * (vy / vx));
+                double rightY = y0 + ((imageWidth - 1 - x0) * (vy / vx));
                 p1 = new Point(0, (int)Math.Round(leftY));
-                p2 = new Point(wd - 1, (int)Math.Round(rightY));
+                p2 = new Point(imageWidth - 1, (int)Math.Round(rightY));
             }
 
-            Scalar color = L.type == "H" ? Scalar.YellowGreen : Scalar.BlueViolet;
-            Cv2.Line(drawn3, p1, p2, color, 1, LineTypes.AntiAlias);
+            Scalar color = colorsList[colorInd];
+
+            Cv2.Line(resultImage2, p1, p2, color, 1, LineTypes.AntiAlias);
 
             // print slope/intercept or vertical
             if (Math.Abs(vx) < 1e-8)
@@ -263,230 +263,237 @@ class Program
                 double intercept = y0 - slope * x0;
                 Console.WriteLine($"Line {idxLine++} ({L.type}): y = {slope:F6} * x + {intercept:F2}, ptsUsed={L.ptsCount}");
             }
+
+            colorInd++;
         }
 
-        saveResultImage(drawn3, path);
-        Cv2.ImShow("fit lines with contours", drawn3);
+        saveResultImage(resultImage2, path);
+        Cv2.ImShow("fit lines with contours", resultImage2);
+
+        #region fit line with all non-zero points
+
+        //// edge non -zero points for FitLine
+        //Mat nonZero = new Mat();
+        //Cv2.FindNonZero(edgeImage, nonZero);
+        //Point[] edgePoints = Enumerable.Range(0, nonZero.Rows)
+        //                               .Select(i => nonZero.At<Point>(i))
+        //                               .ToArray();
+
+        //if (!nonZero.Empty())
+        //{
+        //    // Convert Mat of points to Point[] for FitLine
+        //    // Mat.ToArray<T>() returns an array of the specified value type (Point)
+        //    Point[] pts = Enumerable.Range(0, nonZero.Rows)
+        //                               .Select(i => nonZero.At<Point>(i))
+        //                               .ToArray();
+        //    var outImg2 = new Mat();
+        //    Cv2.CvtColor(srcImage, outImg2, ColorConversionCodes.GRAY2BGR);
+
+        //    if (pts.Length >= 2)
+        //    {
+        //        // FitLine: returns Vec4f [vx, vy, x0, y0]
+        //        var lineVec = Cv2.FitLine(pts, DistanceTypes.L2, 0, 0.01, 0.01);
 
 
-        // edge non -zero points for FitLine
-        Mat nonZero = new Mat();
-        Cv2.FindNonZero(edges, nonZero);
-        Point[] edgePoints = Enumerable.Range(0, nonZero.Rows)
-                                       .Select(i => nonZero.At<Point>(i))
-                                       .ToArray();
+        //        float vx = (float)lineVec.Vx, vy = (float)lineVec.Vy;
+        //        float x0 = (float)lineVec.X1, y0 = (float)lineVec.Y1;
 
-        if (!nonZero.Empty())
-        {
-            // Convert Mat of points to Point[] for FitLine
-            // Mat.ToArray<T>() returns an array of the specified value type (Point)
-            Point[] pts = Enumerable.Range(0, nonZero.Rows)
-                                       .Select(i => nonZero.At<Point>(i))
-                                       .ToArray();
-            var outImg2 = new Mat();
-            Cv2.CvtColor(img, outImg2, ColorConversionCodes.GRAY2BGR);
+        //        // If direction is nearly vertical (vx ~ 0), compute intersections with top/bottom,
+        //        // otherwise compute y at left and right borders.
+        //        Point pLeft, pRight;
+        //        if (Math.Abs(vx) < 1e-6)
+        //        {
+        //            // vertical-ish: x ~ x0; draw from top to bottom
+        //            int x = (int)Math.Round(x0);
+        //            pLeft = new Point(x, 0);
+        //            pRight = new Point(x, srcImage.Height - 1);
+        //        }
+        //        else
+        //        {
+        //            double leftY = y0 + (0 - x0) * (vy / vx);
+        //            double rightY = y0 + (srcImage.Width - 1 - x0) * (vy / vx);
+        //            pLeft = new Point(0, (int)Math.Round(leftY));
+        //            pRight = new Point(srcImage.Width - 1, (int)Math.Round(rightY));
+        //        }
 
-            if (pts.Length >= 2)
-            {
-                // FitLine: returns Vec4f [vx, vy, x0, y0]
-                var lineVec = Cv2.FitLine(pts, DistanceTypes.L2, 0, 0.01, 0.01);
+        //        // Draw fitted least-squares line in GREEN (this usually aligns better with stripe center)
+        //        Cv2.Line(outImg2, pLeft, pRight, Scalar.Green, 1);
+        //        saveResultImage(outImg2, path);
+        //        Cv2.ImShow("edges points fitline", outImg2);
 
+        //        // Print fitted line in slope-intercept form if possible
+        //        if (Math.Abs(vx) < 1e-6)
+        //            Console.WriteLine($"FitLine (vertical): x = {x0:F2}");
+        //        else
+        //        {
+        //            double m = vy / vx;             // slope in param (note: FitLine uses direction (vx,vy))
+        //            double b = y0 - m * x0;         // intercept
+        //            Console.WriteLine($"FitLine: y = {m:F6} * x + {b:F3}");
+        //        }
+        //    }
+        //}
 
-                float vx = (float)lineVec.Vx, vy = (float)lineVec.Vy;
-                float x0 = (float)lineVec.X1, y0 = (float)lineVec.Y1;
+        #endregion
 
-                // If direction is nearly vertical (vx ~ 0), compute intersections with top/bottom,
-                // otherwise compute y at left and right borders.
-                Point pLeft, pRight;
-                if (Math.Abs(vx) < 1e-6)
-                {
-                    // vertical-ish: x ~ x0; draw from top to bottom
-                    int x = (int)Math.Round(x0);
-                    pLeft = new Point(x, 0);
-                    pRight = new Point(x, img.Height - 1);
-                }
-                else
-                {
-                    double leftY = y0 + (0 - x0) * (vy / vx);
-                    double rightY = y0 + (img.Width - 1 - x0) * (vy / vx);
-                    pLeft = new Point(0, (int)Math.Round(leftY));
-                    pRight = new Point(img.Width - 1, (int)Math.Round(rightY));
-                }
-
-                // Draw fitted least-squares line in GREEN (this usually aligns better with stripe center)
-                Cv2.Line(outImg2, pLeft, pRight, Scalar.Green, 1);
-                saveResultImage(outImg2, path);
-                Cv2.ImShow("edges points fitline", outImg2);
-
-                // Print fitted line in slope-intercept form if possible
-                if (Math.Abs(vx) < 1e-6)
-                    Console.WriteLine($"FitLine (vertical): x = {x0:F2}");
-                else
-                {
-                    double m = vy / vx;             // slope in param (note: FitLine uses direction (vx,vy))
-                    double b = y0 - m * x0;         // intercept
-                    Console.WriteLine($"FitLine: y = {m:F6} * x + {b:F3}");
-                }
-            }
-        }
-
-
+        #region  Hough line detection
         // Standard Hough (rho,theta)
-        var raw = Cv2.HoughLines(edges, 1, Math.PI / 360.0, 120); // adjust threshold as needed
+        //var raw = Cv2.HoughLines(edgeImage, 1, Math.PI / 360.0, 120); // adjust threshold as needed
 
-        // 3. Prepare color image for drawing
-        var resultImg = new Mat();
-        Cv2.CvtColor(img, resultImg, ColorConversionCodes.GRAY2BGR);
+        //// 3. Prepare color image for drawing
+        //var resultImg = new Mat();
+        //Cv2.CvtColor(srcImage, resultImg, ColorConversionCodes.GRAY2BGR);
 
-        // ---- NEW: draw *original* Hough lines in BLUE ----
-        foreach (var v in raw)
-        {
-            double rho = v.Rho;
-            double theta = v.Theta;
-            double a = Math.Cos(theta);    // Horizontal component of the unit normal vector pointing perpendicular to the line
-            double b = Math.Sin(theta);    // Vertical component of the unit normal vector pointing perpendicular to the line
-            double x0 = a * rho;           // To draw the line we need two points on it(pt1, pt2). A convenient “base point” is   (x0​,y0​)=(ρa,ρb),
-            double y0 = b * rho;
-            Point pt1 = new Point((int)Math.Round(x0 + 1000 * (-b)),         // (-b, a) is the direction along the line.
-                                  (int)Math.Round(y0 + 1000 * (a)));         // Multiplying by ±1000 moves far in both directions to get two points you can pass to Cv2.Line.
-            Point pt2 = new Point((int)Math.Round(x0 - 1000 * (-b)),
-                                  (int)Math.Round(y0 - 1000 * (a)));
-            var borderPts = GetBorderPoints(rho, theta, img.Width, img.Height);
-            Cv2.Line(resultImg, borderPts[0], borderPts[1], new Scalar(255, 0, 0), 1);
-            //Cv2.Line(resultImg, pt1, pt2, new Scalar(255, 0, 0), 1, LineTypes.AntiAlias);
-        }
-        saveResultImage(resultImg, path);
+        //// ---- NEW: draw *original* Hough lines in BLUE ----
+        //foreach (var v in raw)
+        //{
+        //    double rho = v.Rho;
+        //    double theta = v.Theta;
+        //    double a = Math.Cos(theta);    // Horizontal component of the unit normal vector pointing perpendicular to the line
+        //    double b = Math.Sin(theta);    // Vertical component of the unit normal vector pointing perpendicular to the line
+        //    double x0 = a * rho;           // To draw the line we need two points on it(pt1, pt2). A convenient “base point” is   (x0​,y0​)=(ρa,ρb),
+        //    double y0 = b * rho;
+        //    Point pt1 = new Point((int)Math.Round(x0 + 1000 * (-b)),         // (-b, a) is the direction along the line.
+        //                          (int)Math.Round(y0 + 1000 * (a)));         // Multiplying by ±1000 moves far in both directions to get two points you can pass to Cv2.Line.
+        //    Point pt2 = new Point((int)Math.Round(x0 - 1000 * (-b)),
+        //                          (int)Math.Round(y0 - 1000 * (a)));
+        //    var borderPts = GetBorderPoints(rho, theta, srcImage.Width, srcImage.Height);
+        //    Cv2.Line(resultImg, borderPts[0], borderPts[1], new Scalar(255, 0, 0), 1);
+        //    //Cv2.Line(resultImg, pt1, pt2, new Scalar(255, 0, 0), 1, LineTypes.AntiAlias);
+        //}
+        //saveResultImage(resultImg, path);
 
 
-        // Cluster/merge similar (rho,theta)
-        double angleThresh = Math.PI / 180.0 * 8.0; // 8 degrees tolerance
-        double rhoThresh = 20.0; // pixels tolerance
-        var clusters = new List<LinePolar>();
-        foreach (var v in raw)
-        {
-            double rho = v.Rho;
-            double theta = v.Theta;
-            bool added = false;
-            foreach (var c in clusters)
-            {
-                if (AngleDiff(theta, c.Theta) < angleThresh && Math.Abs(rho - c.Rho) < rhoThresh)
-                {
-                    // incremental average
-                    c.Rho = (c.Rho * c.Count + rho) / (c.Count + 1);
-                    // average angle correctly with sin/cos could be done, but simple average is ok here:
-                    c.Theta = (c.Theta * c.Count + theta) / (c.Count + 1);
-                    c.Count++;
-                    added = true;
-                    break;
-                }
-            }
-            if (!added)
-                clusters.Add(new LinePolar(rho, theta));
-        }
+        //// Cluster/merge similar (rho,theta)
+        //double angleThresh = Math.PI / 180.0 * 8.0; // 8 degrees tolerance
+        //double rhoThresh = 20.0; // pixels tolerance
+        //var clusters = new List<LinePolar>();
+        //foreach (var v in raw)
+        //{
+        //    double rho = v.Rho;
+        //    double theta = v.Theta;
+        //    bool added = false;
+        //    foreach (var c in clusters)
+        //    {
+        //        if (AngleDiff(theta, c.Theta) < angleThresh && Math.Abs(rho - c.Rho) < rhoThresh)
+        //        {
+        //            // incremental average
+        //            c.Rho = (c.Rho * c.Count + rho) / (c.Count + 1);
+        //            // average angle correctly with sin/cos could be done, but simple average is ok here:
+        //            c.Theta = (c.Theta * c.Count + theta) / (c.Count + 1);
+        //            c.Count++;
+        //            added = true;
+        //            break;
+        //        }
+        //    }
+        //    if (!added)
+        //        clusters.Add(new LinePolar(rho, theta));
+        //}
 
-        // Separate vertical-like and horizontal-like groups
-        double orientThresh = Math.PI / 180.0 * 20.0; // 20 degrees to classify horiz/vert
-        var horizontals = clusters.Where(c => AngleDiff(c.Theta, Math.PI / 2) < orientThresh).ToList();
-        var verticals = clusters.Where(c => AngleDiff(c.Theta, 0) < orientThresh || AngleDiff(c.Theta, Math.PI) < orientThresh).ToList();
+        //// Separate vertical-like and horizontal-like groups
+        //double orientThresh = Math.PI / 180.0 * 20.0; // 20 degrees to classify horiz/vert
+        //var horizontals = clusters.Where(c => AngleDiff(c.Theta, Math.PI / 2) < orientThresh).ToList();
+        //var verticals = clusters.Where(c => AngleDiff(c.Theta, 0) < orientThresh || AngleDiff(c.Theta, Math.PI) < orientThresh).ToList();
 
-        // If we found more than two in a group, pick the two farthest apart by rho (likely inner/outer edges)
-        LinePolar[] pick2(List<LinePolar> list)
-        {
-            if (list == null || list.Count == 0) return new LinePolar[0];
-            if (list.Count == 1) return new[] { list[0] };
-            var ordered = list.OrderBy(x => x.Rho).ToArray();
-            return new[] { ordered.First(), ordered.Last() };
-        }
+        //// If we found more than two in a group, pick the two farthest apart by rho (likely inner/outer edges)
+        //LinePolar[] pick2(List<LinePolar> list)
+        //{
+        //    if (list == null || list.Count == 0) return new LinePolar[0];
+        //    if (list.Count == 1) return new[] { list[0] };
+        //    var ordered = list.OrderBy(x => x.Rho).ToArray();
+        //    return new[] { ordered.First(), ordered.Last() };
+        //}
 
-        var picked = new List<LinePolar>();
-        picked.AddRange(pick2(verticals));
-        picked.AddRange(pick2(horizontals));
+        //var picked = new List<LinePolar>();
+        //picked.AddRange(pick2(verticals));
+        //picked.AddRange(pick2(horizontals));
 
-        // fallback: if we haven't got 4, pick the biggest clusters overall (up to 4)
-        if (picked.Count < 4)
-        {
-            var others = clusters.OrderByDescending(c => c.Count).ToList();
-            foreach (var o in others)
-            {
-                if (!picked.Contains(o)) picked.Add(o);
-                if (picked.Count == 4) break;
-            }
-        }
+        //// fallback: if we haven't got 4, pick the biggest clusters overall (up to 4)
+        //if (picked.Count < 4)
+        //{
+        //    var others = clusters.OrderByDescending(c => c.Count).ToList();
+        //    foreach (var o in others)
+        //    {
+        //        if (!picked.Contains(o)) picked.Add(o);
+        //        if (picked.Count == 4) break;
+        //    }
+        //}
 
-        // Keep only up to 4 lines
-        picked = picked.Take(4).ToList();
+        //// Keep only up to 4 lines
+        //picked = picked.Take(4).ToList();
 
-        // Compute intersection corners (we expect 2 vertical × 2 horizontal => 4 corners)
-        var verts = picked.Where(p => AngleDiff(p.Theta, 0) < orientThresh || AngleDiff(p.Theta, Math.PI) < orientThresh).ToList();
-        var hors = picked.Where(p => AngleDiff(p.Theta, Math.PI / 2) < orientThresh).ToList();
-        var corners = new List<Point2d>();
-        foreach (var v in verts)
-            foreach (var h in hors)
-            {
-                var ip = Intersect(v, h);
-                if (ip.HasValue) corners.Add(ip.Value);
-            }
+        //// Compute intersection corners (we expect 2 vertical × 2 horizontal => 4 corners)
+        //var verts = picked.Where(p => AngleDiff(p.Theta, 0) < orientThresh || AngleDiff(p.Theta, Math.PI) < orientThresh).ToList();
+        //var hors = picked.Where(p => AngleDiff(p.Theta, Math.PI / 2) < orientThresh).ToList();
+        //var corners = new List<Point2d>();
+        //foreach (var v in verts)
+        //    foreach (var h in hors)
+        //    {
+        //        var ip = Intersect(v, h);
+        //        if (ip.HasValue) corners.Add(ip.Value);
+        //    }
 
-        Console.WriteLine("Detected lines (up to 4):");
-        int idx = 0;
-        foreach (var L in picked)
-        {
-            idx++;
-            // line in y = m x + b (unless near vertical)
-            double cosT = Math.Cos(L.Theta), sinT = Math.Sin(L.Theta);
-            if (Math.Abs(sinT) < 1e-6)
-            {
-                double x = L.Rho / cosT;
-                Console.WriteLine($"Line {idx}: vertical x = {x:F2}  (rho={L.Rho:F2}, theta={L.Theta:F3})");
-            }
-            else
-            {
-                double m = -cosT / sinT;
-                double b = L.Rho / sinT;
-                Console.WriteLine($"Line {idx}: y = {m:F6} * x + {b:F3}  (rho={L.Rho:F2}, theta={L.Theta:F3})");
-            }
-        }
+        //Console.WriteLine("Detected lines (up to 4):");
+        //int idx = 0;
+        //foreach (var L in picked)
+        //{
+        //    idx++;
+        //    // line in y = m x + b (unless near vertical)
+        //    double cosT = Math.Cos(L.Theta), sinT = Math.Sin(L.Theta);
+        //    if (Math.Abs(sinT) < 1e-6)
+        //    {
+        //        double x = L.Rho / cosT;
+        //        Console.WriteLine($"Line {idx}: vertical x = {x:F2}  (rho={L.Rho:F2}, theta={L.Theta:F3})");
+        //    }
+        //    else
+        //    {
+        //        double m = -cosT / sinT;
+        //        double b = L.Rho / sinT;
+        //        Console.WriteLine($"Line {idx}: y = {m:F6} * x + {b:F3}  (rho={L.Rho:F2}, theta={L.Theta:F3})");
+        //    }
+        //}
 
-        if (corners.Count >= 4)
-        {
-            Console.WriteLine("\nCorner points (intersections):");
-            foreach (var c in corners) Console.WriteLine($"({c.X:F2}, {c.Y:F2})");
-        }
-        else
-        {
-            Console.WriteLine("\nCould not get four corners by intersection. Found corners: " + corners.Count);
-        }
+        //if (corners.Count >= 4)
+        //{
+        //    Console.WriteLine("\nCorner points (intersections):");
+        //    foreach (var c in corners) Console.WriteLine($"({c.X:F2}, {c.Y:F2})");
+        //}
+        //else
+        //{
+        //    Console.WriteLine("\nCould not get four corners by intersection. Found corners: " + corners.Count);
+        //}
 
-        // Visualize: draw extended lines and corner points
-        Mat outImg = new Mat();
-        Cv2.CvtColor(img, outImg, ColorConversionCodes.GRAY2BGR);
+        //// Visualize: draw extended lines and corner points
+        //Mat outImg = new Mat();
+        //Cv2.CvtColor(srcImage, outImg, ColorConversionCodes.GRAY2BGR);
 
-        foreach (var L in picked)
-        {
-            var seg = PointsOnImage(L, img.Width - 1, img.Height - 1);
-            if (seg.HasValue)
-            {
-                Cv2.Line(outImg, seg.Value.p1, seg.Value.p2, new Scalar(0, 0, 255), 1);
-            }
-            else
-            {
-                // fallback: draw a long line via two far points using angle
-                double cosT = Math.Cos(L.Theta), sinT = Math.Sin(L.Theta);
-                // find one point on the line: (x0,y0) = (rho*cos, rho*sin)
-                double x0 = L.Rho * cosT, y0 = L.Rho * sinT;
-                Point p1 = new Point((int)Math.Round(x0 + 1000 * (-sinT)), (int)Math.Round(y0 + 1000 * cosT));
-                Point p2 = new Point((int)Math.Round(x0 - 1000 * (-sinT)), (int)Math.Round(y0 - 1000 * cosT));
-                Cv2.Line(outImg, p1, p2, new Scalar(0, 0, 255), 1);
-            }
-        }
+        //foreach (var L in picked)
+        //{
+        //    var seg = PointsOnImage(L, srcImage.Width - 1, srcImage.Height - 1);
+        //    if (seg.HasValue)
+        //    {
+        //        Cv2.Line(outImg, seg.Value.p1, seg.Value.p2, new Scalar(0, 0, 255), 1);
+        //    }
+        //    else
+        //    {
+        //        // fallback: draw a long line via two far points using angle
+        //        double cosT = Math.Cos(L.Theta), sinT = Math.Sin(L.Theta);
+        //        // find one point on the line: (x0,y0) = (rho*cos, rho*sin)
+        //        double x0 = L.Rho * cosT, y0 = L.Rho * sinT;
+        //        Point p1 = new Point((int)Math.Round(x0 + 1000 * (-sinT)), (int)Math.Round(y0 + 1000 * cosT));
+        //        Point p2 = new Point((int)Math.Round(x0 - 1000 * (-sinT)), (int)Math.Round(y0 - 1000 * cosT));
+        //        Cv2.Line(outImg, p1, p2, new Scalar(0, 0, 255), 1);
+        //    }
+        //}
 
-        foreach (var c in corners)
-        {
-            Cv2.Circle(outImg, new Point((int)Math.Round(c.X), (int)Math.Round(c.Y)), 6, new Scalar(0, 255, 0), -1);
-        }
-        saveResultImage(outImg, path);
+        //foreach (var c in corners)
+        //{
+        //    Cv2.Circle(outImg, new Point((int)Math.Round(c.X), (int)Math.Round(c.Y)), 6, new Scalar(0, 255, 0), -1);
+        //}
+        //saveResultImage(outImg, path);
 
-        Cv2.ImShow("Detected full lines", outImg);
+        //Cv2.ImShow("Detected full lines", outImg);
+        #endregion
+
         Cv2.WaitKey(0);
         Cv2.DestroyAllWindows();
     }
@@ -566,5 +573,25 @@ class Program
         if (angleRad > Math.PI / 2.0) angleRad = Math.PI - angleRad;
         return angleRad; // in [0, PI/2]
     }
- 
+
+    private static double LinearityError(Point[] contour, Point a, Point b)
+    {
+        double A = a.Y - b.Y;
+        double B = b.X - a.X;
+        double C = a.X * b.Y - b.X * a.Y;
+        double denom = Math.Sqrt(A * A + B * B);
+
+        double sum = 0, maxErr = 0;
+        foreach (var p in contour)
+        {
+            double dist = Math.Abs(A * p.X + B * p.Y + C) / denom;
+            sum += dist;
+            if (dist > maxErr) maxErr = dist;
+        }
+
+        double meanErr = sum / contour.Length;
+        Console.WriteLine($"Mean error = {meanErr:F2}, Max error = {maxErr:F2}");
+        return meanErr;
+    }
+
 }
