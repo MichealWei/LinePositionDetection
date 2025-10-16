@@ -1,8 +1,10 @@
-﻿using System;
-using System.Linq;
-using System.Collections.Generic;
+﻿using DetectLine;
 using OpenCvSharp;
+using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Text.RegularExpressions;
 class Program
 {
     class LinePolar
@@ -82,193 +84,214 @@ class Program
     {
         //string path = "C:\\ImageAlgorithm\\Images\\tilted.png"; // use your path
         string currentDirectory = Environment.CurrentDirectory;
-        string path = Path.Combine(currentDirectory, "Images", "tilted.png");  // change image name here: "tilted.png", "wafer.png", "Lshape.png", "horizontal.png"
-        //string path = Path.Combine("Images", "tilted.png");
-        var srcImage = Cv2.ImRead(path, ImreadModes.Grayscale);
-        if (srcImage.Empty())
-        {
-            Console.WriteLine("Cannot read image at " + path);
-            return;
-        }
+        string path = Path.Combine(currentDirectory, "Images", "Lshape.png");  // change image name here: "tilted.png", "wafer.png", "Lshape.png", "horizontal.png"
+                                                                               //string path = Path.Combine("Images", "tilted.png");
+
+        #region  use folder
+        string folder = Path.Combine(currentDirectory, "LinearityImages");
+        var ptList = LinesDetector.GetContourPointsFromImages(folder, 100, 5);    // use helper class to package things up-clean code
+        var linearityErr = LinesDetector.LinearityError(ptList);
+        var linearityError = LinesDetector.CalculateLinearityError(ptList);
+        var filePath = Path.Combine(folder, "Output", "LinearityPoints.csv");
+        LinesDetector.WritePointsToCsv(ptList, filePath);
+        #endregion
+
+        //#region use file
+        //var res = LinesDetector.DetectLines(path);   // traditional way to handle single picture
+        //foreach (var item in res)
+        //{
+        //    if (item.Count > 1)
+        //        Console.WriteLine($"Line: y = {item[0]:F6} * x + {item[1]:F2}");
+        //    else
+        //        Console.WriteLine($"Line: x = {item[0]:F6}");
+        //}
+
+        //var srcImage = Cv2.ImRead(path, ImreadModes.Grayscale);
+        //if (srcImage.Empty())
+        //{
+        //    Console.WriteLine("Cannot read image at " + path);
+        //    return;
+        //}
 
 
-        // Preprocess: blur, threshold, close small gaps
-        Mat blurredImage = new Mat();
-        Cv2.GaussianBlur(srcImage, blurredImage, new Size(5, 5), 0);
-        Mat binaryImage = new Mat();
-        Cv2.Threshold(blurredImage, binaryImage, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
-        Mat kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new Size(5, 5));
-        Cv2.MorphologyEx(binaryImage, binaryImage, MorphTypes.Close, kernel);
+        //// Preprocess: blur, threshold, close small gaps
+        //Mat blurredImage = new Mat();
+        //Cv2.GaussianBlur(srcImage, blurredImage, new Size(5, 5), 0);
+        //Mat binaryImage = new Mat();
+        //Cv2.Threshold(blurredImage, binaryImage, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
+        //Mat kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new Size(5, 5));
+        //Cv2.MorphologyEx(binaryImage, binaryImage, MorphTypes.Close, kernel);
 
-        // Edge detect
-        Mat edgeImage = new Mat();
-        Cv2.Canny(binaryImage, edgeImage, 50, 150);
-        //Cv2.Canny(bin, edges, 50, 150, 3, false);
-        saveResultImage(edgeImage, path);
+        //// Edge detect
+        //Mat edgeImage = new Mat();
+        //Cv2.Canny(binaryImage, edgeImage, 50, 150);
+        ////Cv2.Canny(bin, edges, 50, 150, 3, false);
+        //saveResultImage(edgeImage, path);
 
-        // Find contours, use contours points for FitLine instead of all edge points
-        Cv2.FindContours(edgeImage, out var contours,
-                        out _, RetrievalModes.External,
-                        ContourApproximationModes.ApproxNone);
-
-        
-        int imageWidth = srcImage.Cols;
-        int imageHeight = srcImage.Rows;
-
-        var resultImage = new Mat();
-        Cv2.CvtColor(srcImage, resultImage, ColorConversionCodes.GRAY2BGR);
-
-        for (int i = 0; i < contours.Length; i++)   // Draw contours in blue to check it
-        {
-            Cv2.DrawContours(resultImage, contours, i, Scalar.Blue, 1, LineTypes.AntiAlias);
-        }
-        saveResultImage(resultImage, path);
-        Cv2.ImShow("contours", resultImage);
+        //// Find contours, use contours points for FitLine instead of all edge points
+        //Cv2.FindContours(edgeImage, out var contours,
+        //                out _, RetrievalModes.External,
+        //                ContourApproximationModes.ApproxNone);
 
 
-        // Tunable parameters (adapt by image size if needed)
-        double minSegLen = Math.Max(8.0, Math.Min(imageWidth, imageHeight) * 0.02);   // ignore polygon edges shorter than this
-        int minPtsForFit = Math.Max(30, (int)(Math.Min(imageWidth, imageHeight) * 0.03)); // require this many unique points to fit
-        double horizDegThresh = 30.0;  // <=30° considered horizontal after mapping
-        double vertDegThresh = 30.0;   // <=30° from vertical => mapped angle >= (90-30)=60 ; we use mapped angle > (90-vertThresh)
-        double horizRadThresh = horizDegThresh * Math.PI / 180.0;
-        double vertRadThresh = vertDegThresh * Math.PI / 180.0;
+        //int imageWidth = srcImage.Cols;
+        //int imageHeight = srcImage.Rows;
 
-        // We'll collect fitted lines (vx, vy, x0, y0, count) to draw later
-        var fittedLines = new List<(double vx, double vy, double x0, double y0, string type, int ptsCount)>();
-        var colorsList = new List<Scalar> { Scalar.Yellow, Scalar.Aqua, Scalar.Red, Scalar.Blue };
-        foreach (var contour in contours)
-        {
-            if (contour.Length < 30)      // skip tiny noise
-                continue;
+        //var resultImage = new Mat();
+        //Cv2.CvtColor(srcImage, resultImage, ColorConversionCodes.GRAY2BGR);
+
+        //for (int i = 0; i < contours.Length; i++)   // Draw contours in blue to check it
+        //{
+        //    Cv2.DrawContours(resultImage, contours, i, Scalar.Blue, 1, LineTypes.AntiAlias);
+        //}
+        //saveResultImage(resultImage, path);
+        //Cv2.ImShow("contours", resultImage);
 
 
-            // Approximate to reduce number of points
-            var approx = Cv2.ApproxPolyDP(contour, 2, true);
+        //// Tunable parameters (adapt by image size if needed)
+        //double minSegLen = Math.Max(8.0, Math.Min(imageWidth, imageHeight) * 0.02);   // ignore polygon edges shorter than this
+        //int minPtsForFit = Math.Max(30, (int)(Math.Min(imageWidth, imageHeight) * 0.03)); // require this many unique points to fit
+        //double horizDegThresh = 30.0;  // <=30° considered horizontal after mapping
+        //double vertDegThresh = 30.0;   // <=30° from vertical => mapped angle >= (90-30)=60 ; we use mapped angle > (90-vertThresh)
+        //double horizRadThresh = horizDegThresh * Math.PI / 180.0;
+        //double vertRadThresh = vertDegThresh * Math.PI / 180.0;
 
-            var horizontalPts = new List<Point>();
-            var verticalPts = new List<Point>();
-
-            // Examine every consecutive pair of points in the polygon
-            for (int i = 0; i < approx.Length; i++)
-            {
-                Point pt1 = approx[i];
-                Point pt2 = approx[(i + 1) % approx.Length];
-                double dx = pt2.X - pt1.X;
-                double dy = pt2.Y - pt1.Y;
-                double segLen = Math.Sqrt(dx * dx + dy * dy);
-                if (segLen < minSegLen)
-                    continue; // skip short approx edges (likely noise / small corner detail)
+        //// We'll collect fitted lines (vx, vy, x0, y0, count) to draw later
+        //var fittedLines = new List<(double vx, double vy, double x0, double y0, string type, int ptsCount)>();
+        //var colorsList = new List<Scalar> { Scalar.Yellow, Scalar.Aqua, Scalar.Red, Scalar.Blue };
+        //foreach (var contour in contours)
+        //{
+        //    if (contour.Length < 30)      // skip tiny noise
+        //        continue;
 
 
-                // compute mapped angle in [0, PI/2]
-                double ang = Math.Atan2(dy, dx);
-                double angMapped = AngleTo0_90Rad(ang); // 0..PI/2
+        //    // Approximate to reduce number of points
+        //    var approx = Cv2.ApproxPolyDP(contour, 2, true);
 
-                // angleMapped small -> horizontal; angleMapped near PI/2 -> vertical
-                bool isHorizontal = angMapped <= horizRadThresh;
-                bool isVertical = angMapped >= (Math.PI / 2.0 - vertRadThresh);
+        //    var horizontalPts = new List<Point>();
+        //    var verticalPts = new List<Point>();
 
-                // find indices of p1 and p2 in original contour (should exist)
-                int pt1Index = Array.FindIndex(contour, pt => pt.X == pt1.X && pt.Y == pt1.Y);
-                int pt2Index = Array.FindIndex(contour, pt => pt.X == pt2.X && pt.Y == pt2.Y);
+        //    // Examine every consecutive pair of points in the polygon
+        //    for (int i = 0; i < approx.Length; i++)
+        //    {
+        //        Point pt1 = approx[i];
+        //        Point pt2 = approx[(i + 1) % approx.Length];
+        //        double dx = pt2.X - pt1.X;
+        //        double dy = pt2.Y - pt1.Y;
+        //        double segLen = Math.Sqrt(dx * dx + dy * dy);
+        //        if (segLen < minSegLen)
+        //            continue; // skip short approx edges (likely noise / small corner detail)
 
-                // collect contour points along the segment between idx1 and idx2 (wrap if needed)
-                List<Point> segPoints = new List<Point>();
-                if (pt1Index >= 0 && pt2Index >= 0)
-                {
-                    if (pt2Index >= pt1Index)
-                    {
-                        for (int k = pt1Index; k <= pt2Index; k++) segPoints.Add(contour[k]);
-                    }
-                }
-                else
-                {
-                    // fallback: use the approx endpoints if mapping failed
-                    segPoints.Add(pt1);
-                    segPoints.Add(pt2);
-                }
 
-                // Add these points to chosen bucket (horizontal/vertical) if classified
-                if (isHorizontal)
-                {
-                    horizontalPts.AddRange(segPoints);
-                }
-                if (isVertical)
-                {
-                    verticalPts.AddRange(segPoints);
-                }
+        //        // compute mapped angle in [0, PI/2]
+        //        double ang = Math.Atan2(dy, dx);
+        //        double angMapped = AngleTo0_90Rad(ang); // 0..PI/2
 
-                // draw the approx segment (for debugging) - thin cyan
-                Cv2.Line(resultImage, pt1, pt2, new Scalar(200, 200, 0), 1);
-            }
+        //        // angleMapped small -> horizontal; angleMapped near PI/2 -> vertical
+        //        bool isHorizontal = angMapped <= horizRadThresh;
+        //        bool isVertical = angMapped >= (Math.PI / 2.0 - vertRadThresh);
 
-            // Remove deduplicate points
-            var horizUnique = horizontalPts.Distinct().ToArray();
-            var vertUnique = verticalPts.Distinct().ToArray();
+        //        // find indices of p1 and p2 in original contour (should exist)
+        //        int pt1Index = Array.FindIndex(contour, pt => pt.X == pt1.X && pt.Y == pt1.Y);
+        //        int pt2Index = Array.FindIndex(contour, pt => pt.X == pt2.X && pt.Y == pt2.Y);
 
-            Console.WriteLine($"Contour pts: {contour.Length}, approx edges: {approx.Length}, horizPts={horizUnique.Length}, vertPts={vertUnique.Length}");
+        //        // collect contour points along the segment between idx1 and idx2 (wrap if needed)
+        //        List<Point> segPoints = new List<Point>();
+        //        if (pt1Index >= 0 && pt2Index >= 0)
+        //        {
+        //            if (pt2Index >= pt1Index)
+        //            {
+        //                for (int k = pt1Index; k <= pt2Index; k++) segPoints.Add(contour[k]);
+        //            }
+        //        }
+        //        else
+        //        {
+        //            // fallback: use the approx endpoints if mapping failed
+        //            segPoints.Add(pt1);
+        //            segPoints.Add(pt2);
+        //        }
 
-            // Fit a line to horizontal points if enough points
-            if (horizUnique.Length >= minPtsForFit)
-            {
-                var fit = Cv2.FitLine(horizUnique, DistanceTypes.L2, 0, 0.01, 0.01);
-                fittedLines.Add((fit.Vx, fit.Vy, fit.X1, fit.Y1, "H", horizUnique.Length));
-            }
+        //        // Add these points to chosen bucket (horizontal/vertical) if classified
+        //        if (isHorizontal)
+        //        {
+        //            horizontalPts.AddRange(segPoints);
+        //        }
+        //        if (isVertical)
+        //        {
+        //            verticalPts.AddRange(segPoints);
+        //        }
 
-            // Fit a line to vertical points if enough points
-            if (vertUnique.Length >= minPtsForFit)
-            {
-                var fit = Cv2.FitLine(vertUnique, DistanceTypes.L2, 0, 0.01, 0.01);
-                fittedLines.Add((fit.Vx, fit.Vy, fit.X1, fit.Y1, "V", horizUnique.Length));
-            }
-        }
+        //        // draw the approx segment (for debugging) - thin cyan
+        //        Cv2.Line(resultImage, pt1, pt2, new Scalar(200, 200, 0), 1);
+        //    }
 
-        // Draw fitted lines across image and print equations
-        int idxLine = 1;
-        var resultImage2 = new Mat();
-        Cv2.CvtColor(srcImage, resultImage2, ColorConversionCodes.GRAY2BGR);
-        int colorInd = 0;
-        foreach (var L in fittedLines)
-        {
-            double vx = L.vx, vy = L.vy, x0 = L.x0, y0 = L.y0;
-            Point p1, p2;
+        //    // Remove deduplicate points
+        //    var horizUnique = horizontalPts.Distinct().ToArray();
+        //    var vertUnique = verticalPts.Distinct().ToArray();
 
-            // avoid division by zero:
-            if (Math.Abs(vx) < 1e-8)
-            {
-                int x = (int)Math.Round(x0);
-                p1 = new Point(x, 0); p2 = new Point(x, imageHeight - 1);
-            }
-            else
-            {
-                double leftY = y0 + (0 - x0) * (vy / vx);
-                double rightY = y0 + ((imageWidth - 1 - x0) * (vy / vx));
-                p1 = new Point(0, (int)Math.Round(leftY));
-                p2 = new Point(imageWidth - 1, (int)Math.Round(rightY));
-            }
+        //    Console.WriteLine($"Contour pts: {contour.Length}, approx edges: {approx.Length}, horizPts={horizUnique.Length}, vertPts={vertUnique.Length}");
 
-            Scalar color = colorsList[colorInd];
+        //    // Fit a line to horizontal points if enough points
+        //    if (horizUnique.Length >= minPtsForFit)
+        //    {
+        //        var fit = Cv2.FitLine(horizUnique, DistanceTypes.L2, 0, 0.01, 0.01);
+        //        fittedLines.Add((fit.Vx, fit.Vy, fit.X1, fit.Y1, "H", horizUnique.Length));
+        //    }
 
-            Cv2.Line(resultImage2, p1, p2, color, 1, LineTypes.AntiAlias);
+        //    // Fit a line to vertical points if enough points
+        //    if (vertUnique.Length >= minPtsForFit)
+        //    {
+        //        var fit = Cv2.FitLine(vertUnique, DistanceTypes.L2, 0, 0.01, 0.01);
+        //        fittedLines.Add((fit.Vx, fit.Vy, fit.X1, fit.Y1, "V", horizUnique.Length));
+        //    }
+        //}
 
-            // print slope/intercept or vertical
-            if (Math.Abs(vx) < 1e-8)
-            {
-                Console.WriteLine($"Line {idxLine++} ({L.type}): vertical x ≈ {x0:F2}, ptsUsed={L.ptsCount}");
-            }
-            else
-            {
-                double slope = vy / vx;
-                double intercept = y0 - slope * x0;
-                Console.WriteLine($"Line {idxLine++} ({L.type}): y = {slope:F6} * x + {intercept:F2}, ptsUsed={L.ptsCount}");
-            }
+        //// Draw fitted lines across image and print equations
+        //int idxLine = 1;
+        //var resultImage2 = new Mat();
+        //Cv2.CvtColor(srcImage, resultImage2, ColorConversionCodes.GRAY2BGR);
+        //int colorInd = 0;
+        //foreach (var L in fittedLines)
+        //{
+        //    double vx = L.vx, vy = L.vy, x0 = L.x0, y0 = L.y0;
+        //    Point p1, p2;
 
-            colorInd++;
-        }
+        //    // avoid division by zero:
+        //    if (Math.Abs(vx) < 1e-8)
+        //    {
+        //        int x = (int)Math.Round(x0);
+        //        p1 = new Point(x, 0); p2 = new Point(x, imageHeight - 1);
+        //    }
+        //    else
+        //    {
+        //        double leftY = y0 + (0 - x0) * (vy / vx);
+        //        double rightY = y0 + ((imageWidth - 1 - x0) * (vy / vx));
+        //        p1 = new Point(0, (int)Math.Round(leftY));
+        //        p2 = new Point(imageWidth - 1, (int)Math.Round(rightY));
+        //    }
 
-        saveResultImage(resultImage2, path);
-        Cv2.ImShow("fit lines with contours", resultImage2);
+        //    Scalar color = colorsList[colorInd];
+
+        //    Cv2.Line(resultImage2, p1, p2, color, 1, LineTypes.AntiAlias);
+
+        //    // print slope/intercept or vertical
+        //    if (Math.Abs(vx) < 1e-8)
+        //    {
+        //        Console.WriteLine($"Line {idxLine++} ({L.type}): vertical x ≈ {x0:F2}, ptsUsed={L.ptsCount}");
+        //    }
+        //    else
+        //    {
+        //        double slope = vy / vx;
+        //        double intercept = y0 - slope * x0;
+        //        Console.WriteLine($"Line {idxLine++} ({L.type}): y = {slope:F6} * x + {intercept:F2}, ptsUsed={L.ptsCount}");
+        //    }
+
+        //    colorInd++;
+        //}
+
+        //saveResultImage(resultImage2, path);
+        //Cv2.ImShow("fit lines with contours", resultImage2);
+        //#endregion
 
         #region fit line with all non-zero points
 
