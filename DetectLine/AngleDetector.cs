@@ -4,13 +4,12 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Windows.Controls;
+using System.Threading.Tasks;
 
 namespace DetectLine
 {
-    public static class LinesDetector
+    public static class AngleDetector
     {
-
         public static List<List<double>> DetectLines(string imagePath, bool isHorizontalLine = true)  // isHorizontalLine - whether to use horizontal line or vertical line for linearity of the L shape object
         {
             List<List<double>> result = new List<List<double>>();  // each List<double> holds a line equation of the form y = a * x + b, for vertical case it is x = b; so the list is either two item length or one.
@@ -23,10 +22,12 @@ namespace DetectLine
             }
 
             Mat tempImage = new Mat();
-            Cv2.GaussianBlur(srcImage, tempImage, new Size(5, 5), 0);
-            Cv2.Threshold(tempImage, tempImage, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
-            Mat kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new Size(5, 5));
-            Cv2.MorphologyEx(tempImage, tempImage, MorphTypes.Close, kernel);
+            Cv2.GaussianBlur(srcImage, tempImage, new Size(3, 3), 0);
+            //Cv2.Threshold(tempImage, tempImage, 0, 120, ThresholdTypes.Binary | ThresholdTypes.Otsu);
+            //Mat kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new Size(9, 9));
+            //Cv2.MorphologyEx(tempImage, tempImage, MorphTypes.Open, kernel);
+            //saveImage(tempImage, imagePath, "binary");
+            Cv2.GaussianBlur(tempImage, tempImage, new Size(5, 5), 0);
 
             // Edge detect
             Mat edgeImage = new Mat();
@@ -51,6 +52,7 @@ namespace DetectLine
             {
                 Cv2.DrawContours(resultImage, contours, i, Scalar.Blue, 1, LineTypes.AntiAlias);
             }
+            saveImage(edgeImage, imagePath, "edge");
             saveImage(resultImage, imagePath, "contour");
 
             // We'll collect fitted lines (vx, vy, x0, y0, count) to draw later
@@ -148,14 +150,17 @@ namespace DetectLine
             var resultImage2 = new Mat();
             Cv2.CvtColor(srcImage, resultImage2, ColorConversionCodes.GRAY2BGR);
             int colorInd = 0;
+            List<double> lineVectors = new List<double>();
             foreach (var L in fittedLines)
             {
-                if(isHorizontalLine == true && L.type == "V")   // only horizontal requested
+                if (isHorizontalLine == true && L.type == "V")   // only horizontal requested
                     continue;
-                if(isHorizontalLine == false && L.type == "H")  // only vertical requested
+                if (isHorizontalLine == false && L.type == "H")  // only vertical requested
                     continue;
 
                 double vx = L.vx, vy = L.vy, x0 = L.x0, y0 = L.y0;
+                lineVectors.Add(vx);
+                lineVectors.Add(vy);
                 Point p1, p2;
 
                 // avoid division by zero:
@@ -196,218 +201,13 @@ namespace DetectLine
                 colorInd++;
             }
 
+            var angle = CalculateAngle(lineVectors[0], lineVectors[1], lineVectors[2], lineVectors[3]);
+            Console.WriteLine($"The angle is: {angle} \n");
+
             saveImage(resultImage2, imagePath, "detectedLines");
             return result;
         }
 
-        /// <summary>
-        /// 计算直线度误差（两端点法）
-        /// </summary>
-        /// <param name="points">检测点集合（至少包含2个点，否则返回0）</param>
-        /// <returns>直线度误差（所有点到两端点连线的最大垂直距离）</returns>
-        public static double CalculateLinearityError(List<Point> points)
-        {
-            // 输入验证：至少需要2个点才能构成直线
-            if (points == null || points.Count < 2)
-            {
-                throw new ArgumentException("检测点数量不足，至少需要2个点");
-            }
-
-            // 去重处理（避免重复点导致计算异常）
-            var distinctPoints = points.Distinct().ToList();
-            if (distinctPoints.Count < 2)
-            {
-                return 0; // 所有点重合，直线度误差为0
-            }
-
-            // 取首尾两点作为基准端点（若点集无序，建议先按X轴排序）
-            var p1 = distinctPoints.First();
-            var p2 = distinctPoints.Last();
-
-            // 计算两端点连线的直线方程参数（Ax + By + C = 0）
-            double A = p2.Y - p1.Y;       // A = y2 - y1
-            double B = p1.X - p2.X;       // B = x1 - x2
-            double C = p2.X * p1.Y - p1.X * p2.Y; // C = x2y1 - x1y2
-
-            // 计算直线长度（用于垂直距离公式的分母，避免重复计算）
-            double lineLength = Math.Sqrt(A * A + B * B);
-            if (lineLength < 1e-9) // 避免除以0（两点几乎重合）
-            {
-                return 0;
-            }
-            //double maxDistance = 0;
-
-            double maxPositive = 0; // 最大正向偏差（直线一侧）
-            double maxNegative = 0; // 最大负向偏差（直线另一侧，记录绝对值）
-            Point positiveFarPoint = new Point(); // 最大正向偏差点
-            Point negativeFarPoint = new Point(); // 最大负向偏差点
-
-            // 遍历所有点，计算到基准直线的垂直距离
-            foreach (var point in distinctPoints)
-            {
-                double x = point.X;
-                double y = point.Y;
-
-                //// 点到直线的垂直距离公式：|Ax + By + C| / √(A² + B²)
-                //double distance = Math.Abs(A * x + B * y + C) / lineLength;
-
-                //// 记录最大距离（即直线度误差）
-                //if (distance > maxDistance)
-                //{
-                //    maxDistance = distance;
-                //}
-
-
-                // 计算带符号的距离（分子部分，保留正负）
-                double signedDistanceNumerator = A * x + B * y + C;
-                // 带符号的距离（未除以模长时，符号已能反映方向）
-                double signedDistance = signedDistanceNumerator / lineLength;
-
-                // 区分正负偏差
-                if (signedDistance > 0)
-                {
-                    if (signedDistance > maxPositive)
-                    {
-                        maxPositive = signedDistance;
-                        positiveFarPoint = point;
-                    }
-                }
-                else
-                {
-                    double absNegative = Math.Abs(signedDistance);
-                    if (absNegative > maxNegative)
-                    {
-                        maxNegative = absNegative;
-                        negativeFarPoint = point;
-                    }
-                }
-            }
-
-            Console.WriteLine($"最大正向偏差点: [{positiveFarPoint.X},{positiveFarPoint.Y}],其偏差为{maxPositive}; 最大负向偏差点: [{negativeFarPoint.X},{negativeFarPoint.Y}],其偏差为{maxNegative}. 偏差之和为{maxPositive + maxNegative} ");
-            // 直线度误差 = 两侧最大距离之和
-            return maxPositive + maxNegative;
-            //return maxDistance;
-        }
-
-        public static List<Point> GetContourPointsFromImages(string folder, int offsetInImage, int imageDistance)
-        {
-            var allFiles = Directory.GetFiles(folder);
-            List < Point > result = new List< Point >();
-            if (allFiles.Length  == 0)
-            {
-                Console.WriteLine($"No image files in {folder}");
-                return result;
-            }
-
-            var outputPath = Path.Combine(folder, "Output");  // clear result files from last time
-            if (Directory.Exists(outputPath))
-            {
-                Directory.Delete(outputPath, recursive: true);
-            }
-            
-
-            // 按文件名中 "location-数字" 的数字部分排序
-            var sortedFiles = allFiles.OrderBy(file =>
-            {
-                string fileName = Path.GetFileNameWithoutExtension(file); // 去掉扩展名（如 .txt）
-                                                                          // 按 "-" 拆分文件名（例如 "abc-location-10" 拆分为 ["abc", "location", "10"]）
-                string[] parts = fileName.Split(new[] { '-' }, StringSplitOptions.RemoveEmptyEntries);
-                // 提取最后一段（数字部分），转换为整数用于排序
-                if (parts.Length >= 1 && int.TryParse(parts.Last(), out int num))
-                {
-                    return num; // 按数字大小排序
-                }
-                // 若无法提取数字，默认排在最后（可根据需求调整）
-                return int.MaxValue;
-            }).ToArray();
-
-            int imageIndex = 0;
-            foreach (var file in sortedFiles)
-            {
-                var lineResult = LinesDetector.DetectLines(file);
-                var firstLineOffset = lineResult[0][0] * offsetInImage + lineResult[0][1];
-                var secondLineOffset = lineResult[1][0] * offsetInImage + lineResult[1][1];
-                var averageOffset = (firstLineOffset + secondLineOffset) / 2;
-                Point point = new Point();
-                point.X = imageIndex * imageDistance;
-                point.Y = (int)Math.Round(averageOffset);
-                result.Add(point);
-                imageIndex++;
-            }
-
-             return result;
-        }
-
-
-        /// <summary>
-        /// 将点集写入CSV文件（格式：X,Y）
-        /// </summary>
-        /// <param name="points">待写入的点集（每个点包含X、Y坐标）</param>
-        /// <param name="filePath">CSV文件保存路径（如：@"C:\data\points.csv"）</param>
-        /// <param name="includeHeader">是否包含表头（默认包含，表头为"X,Y"）</param>
-        /// <returns>是否写入成功</returns>
-        public static bool WritePointsToCsv(List<Point> points, string filePath, bool includeHeader = false)
-        {
-            // 输入验证
-            if (points == null || points.Count == 0)
-            {
-                Console.WriteLine("错误：点集为空，无需写入");
-                return false;
-            }
-
-            if (string.IsNullOrEmpty(filePath))
-            {
-                Console.WriteLine("错误：文件路径不能为空");
-                return false;
-            }
-
-            try
-            {
-                // 创建文件目录（若不存在）
-                string directory = Path.GetDirectoryName(filePath);
-                if (!Directory.Exists(directory))
-                {
-                    Directory.CreateDirectory(directory);
-                }
-
-                // 写入CSV内容
-                using (StreamWriter writer = new StreamWriter(filePath, false, Encoding.UTF8))
-                {
-                    // 写入表头（可选）
-                    if (includeHeader)
-                    {
-                        writer.WriteLine("X,Y");
-                    }
-
-                    // 写入每个点的坐标（格式：X值,Y值，保留6位小数）
-                    foreach (var point in points)
-                    {
-                        // 格式化坐标为字符串（避免科学计数法，保留6位小数）
-                        string line = $"[{point.X:F6},{point.Y:F6}]";
-                        writer.WriteLine(line);
-                    }
-                }
-
-                Console.WriteLine($"成功写入CSV文件：{filePath}，共 {points.Count} 个点");
-                return true;
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                Console.WriteLine($"权限错误：无法写入文件 {filePath}，{ex.Message}");
-            }
-            catch (IOException ex)
-            {
-                Console.WriteLine($"IO错误：文件操作失败，{ex.Message}（可能文件被占用）");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"写入失败：{ex.Message}");
-            }
-
-            return false;
-        }
-
-        // Map any angle to [0, PI) then to [0, PI/2] so 0 and ~PI are both horizontal
         private static double AngleTo0_90Rad(double angleRad)
         {
             // angleRad from atan2(dy,dx) in [-PI, PI]
@@ -438,6 +238,36 @@ namespace DetectLine
             Cv2.ImWrite(newFileName, imagedst);
         }
 
- 
-}
+        /// <summary>
+        /// 计算两条直线的夹角（单位：度，范围 0°~90°）
+        /// </summary>
+        /// <param name="vx1">直线1方向向量x分量</param>
+        /// <param name="vy1">直线1方向向量y分量</param>
+        /// <param name="vx2">直线2方向向量x分量</param>
+        /// <param name="vy2">直线2方向向量y分量</param>
+        /// <returns>夹角（度）</returns>
+        public static double CalculateAngle(double vx1, double vy1, double vx2, double vy2)
+        {
+            // 计算方向向量的点积（取绝对值，确保夹角为最小角）
+            double dotProduct = Math.Abs(vx1 * vx2 + vy1 * vy2);
+
+            // 计算两个方向向量的模长
+            double len1 = Math.Sqrt(vx1 * vx1 + vy1 * vy1);
+            double len2 = Math.Sqrt(vx2 * vx2 + vy2 * vy2);
+
+            // 避免除以0（方向向量无效的情况）
+            if (len1 < 1e-6 || len2 < 1e-6)
+                return 0.0;
+
+            // 计算cosα
+            double cosAlpha = dotProduct / (len1 * len2);
+
+            // 处理浮点数精度问题，确保cosTheta在[-1, 1]范围内
+            cosAlpha = Math.Max(-1.0, Math.Min(1.0, cosAlpha));
+
+            // 计算弧度并转换为角度
+            double angleRadian = Math.Acos(cosAlpha);
+            return angleRadian * 180 / Math.PI;
+        }
+    }
 }

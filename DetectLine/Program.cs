@@ -84,27 +84,27 @@ class Program
     {
         //string path = "C:\\ImageAlgorithm\\Images\\tilted.png"; // use your path
         string currentDirectory = Environment.CurrentDirectory;
-        string path = Path.Combine(currentDirectory, "Images", "Lshape.png");  // change image name here: "tilted.png", "wafer.png", "Lshape.png", "horizontal.png"
-                                                                               //string path = Path.Combine("Images", "tilted.png");
+        string path = Path.Combine(currentDirectory, "Images", "template.png");  // change image name here: "tilted.png", "wafer.png", "Lshape.png", "horizontal.png"
+                                                                                 //string path = Path.Combine("Images", "tilted.png");
 
-        #region  use folder
-        string folder = Path.Combine(currentDirectory, "LinearityImages");
-        var ptList = LinesDetector.GetContourPointsFromImages(folder, 100, 5);    // use helper class to package things up-clean code
-        var linearityErr = LinesDetector.LinearityError(ptList);
-        var linearityError = LinesDetector.CalculateLinearityError(ptList);
-        var filePath = Path.Combine(folder, "Output", "LinearityPoints.csv");
-        LinesDetector.WritePointsToCsv(ptList, filePath);
-        #endregion
+        //#region  use folder
+        //string folder = Path.Combine(currentDirectory, "LinearityImages");
+        //var ptList = LinesDetector.GetContourPointsFromImages(folder, 100, 5);    // use helper class to package things up-clean code
+        ////var linearityErr = LinesDetector.LinearityError(ptList);
+        //var linearityError = LinesDetector.CalculateLinearityError(ptList);
+        //var filePath = Path.Combine(folder, "Output", "LinearityPoints.csv");
+        //LinesDetector.WritePointsToCsv(ptList, filePath);
+        //#endregion
 
         //#region use file
-        //var res = LinesDetector.DetectLines(path);   // traditional way to handle single picture
-        //foreach (var item in res)
-        //{
-        //    if (item.Count > 1)
-        //        Console.WriteLine($"Line: y = {item[0]:F6} * x + {item[1]:F2}");
-        //    else
-        //        Console.WriteLine($"Line: x = {item[0]:F6}");
-        //}
+        var res = AngleDetector.DetectLines(path,false);   // traditional way to handle single picture
+        foreach (var item in res)
+        {
+            if (item.Count > 1)
+                Console.WriteLine($"Line: y = {item[0]:F6} * x + {item[1]:F2}");
+            else
+                Console.WriteLine($"Line: x = {item[0]:F6}");
+        }
 
         //var srcImage = Cv2.ImRead(path, ImreadModes.Grayscale);
         //if (srcImage.Empty())
